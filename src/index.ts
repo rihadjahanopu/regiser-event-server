@@ -46,4 +46,4 @@ if (!process.env.VERCEL && process.env.NODE_ENV !== "production") {
   });
 }
 
-module.exports = app;
+export default app;
