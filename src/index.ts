@@ -3,10 +3,10 @@ import cors from "cors";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
 import { toNodeHandler } from "better-auth/node";
-import { auth } from "./config/auth";
-import registrationRoutes from "./routes/registration";
-import adminRoutes from "./routes/admin";
-import settingsRoutes from "./routes/settings";
+import { auth } from "./config/auth.js";
+import registrationRoutes from "./routes/registration.js";
+import adminRoutes from "./routes/admin.js";
+import settingsRoutes from "./routes/settings.js";
 
 // Load environment variables
 dotenv.config();

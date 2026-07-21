@@ -1,10 +1,10 @@
 import { Router } from "express";
-import { Registration } from "../models/Registration";
-import { Admin } from "../models/Admin";
+import { Registration } from "../models/Registration.js";
+import { Admin } from "../models/Admin.js";
 import bcrypt from "bcryptjs";
-import { auth } from "../config/auth";
-import { cloudinary, upload } from "../config/cloudinary";
-import Settings from "../models/Settings";
+import { auth } from "../config/auth.js";
+import { cloudinary, upload } from "../config/cloudinary.js";
+import Settings from "../models/Settings.js";
 
 const router = Router();
 

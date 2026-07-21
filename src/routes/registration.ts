@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { Registration } from "../models/Registration";
+import { Registration } from "../models/Registration.js";
 
 const router = Router();
 

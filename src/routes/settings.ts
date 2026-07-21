@@ -1,5 +1,5 @@
 import { Router } from "express";
-import Settings from "../models/Settings";
+import Settings from "../models/Settings.js";
 
 const router = Router();
 
