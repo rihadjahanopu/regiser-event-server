@@ -40,7 +40,7 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/settings", settingsRoutes);
 
 // Start server locally (Vercel will use the exported app instead)
-if (process.env.NODE_ENV !== "production") {
+if (!process.env.VERCEL && process.env.NODE_ENV !== "production") {
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
   });
