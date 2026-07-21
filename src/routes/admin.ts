@@ -250,11 +250,13 @@ router.put("/settings/status", async (req, res) => {
       return res.status(400).json({ success: false, error: "isOpen must be a boolean" });
     }
 
-    const settings = await Settings.findOneAndUpdate(
-      {},
-      { isRegistrationOpen: isOpen },
-      { upsert: true, new: true }
-    );
+    let settings = await Settings.findOne({});
+    if (!settings) {
+      settings = new Settings({ isRegistrationOpen: isOpen });
+    } else {
+      settings.isRegistrationOpen = isOpen;
+    }
+    await settings.save();
 
     res.json({ success: true, data: settings });
   } catch (error) {
