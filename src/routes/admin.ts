@@ -152,6 +152,17 @@ router.delete("/registrations/:id", async (req, res) => {
   }
 });
 
+// Delete All Registrations
+router.delete("/registrations", async (req, res) => {
+  try {
+    await Registration.deleteMany({});
+    res.json({ success: true, message: "All registrations deleted successfully" });
+  } catch (error) {
+    console.error("Error deleting all registrations:", error);
+    res.status(500).json({ success: false, error: "Failed to delete all registrations" });
+  }
+});
+
 // Register Admin
 router.post("/register", async (req, res) => {
   try {
