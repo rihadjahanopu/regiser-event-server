@@ -10,6 +10,10 @@ const settingsSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    isRegistrationOpen: {
+      type: Boolean,
+      default: true,
+    },
   },
   { timestamps: true }
 );
