@@ -16,9 +16,22 @@ const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(express.json());
+const allowedOrigins = [
+  process.env.CLIENT_URL || "http://localhost:3000",
+  "https://talamijbd.vercel.app",
+  "http://localhost:3000",
+];
+
 app.use(cors({
-  origin: process.env.CLIENT_URL || "http://localhost:3000",
-  credentials: true, // Allow cookies for better-auth if needed
+  origin: (origin, callback) => {
+    // Allow requests with no origin (Vercel serverless, curl, etc.)
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error(`CORS: ${origin} not allowed`));
+    }
+  },
+  credentials: true,
 }));
 
 // Connect to MongoDB
