@@ -24,12 +24,14 @@ router.get("/dashboard", async (req, res) => {
 		const schools = await Registration.distinct("schoolName");
 		const totalSchools = schools.length;
 
-		const last7Days = await Registration.aggregate([
+		const sevenDaysAgo = new Date();
+		sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+		sevenDaysAgo.setHours(0, 0, 0, 0);
+
+		const aggregateLast7Days = await Registration.aggregate([
 			{
 				$match: {
-					createdAt: {
-						$gte: new Date(new Date().setDate(new Date().getDate() - 7)),
-					},
+					createdAt: { $gte: sevenDaysAgo },
 				},
 			},
 			{
@@ -38,8 +40,36 @@ router.get("/dashboard", async (req, res) => {
 					count: { $sum: 1 },
 				},
 			},
-			{ $sort: { _id: 1 } },
 		]);
+
+		const countsByDate = new Map<string, number>();
+		aggregateLast7Days.forEach((item: any) => {
+			countsByDate.set(item._id, item.count);
+		});
+
+		const last7Days = [];
+		for (let i = 6; i >= 0; i--) {
+			const d = new Date();
+			d.setDate(d.getDate() - i);
+
+			const year = d.getFullYear();
+			const month = String(d.getMonth() + 1).padStart(2, "0");
+			const dayNum = String(d.getDate()).padStart(2, "0");
+			const dateKey = `${year}-${month}-${dayNum}`;
+
+			const formattedDate = d.toLocaleDateString("en-US", {
+				month: "short",
+				day: "numeric",
+			});
+			const dayName = d.toLocaleDateString("en-US", { weekday: "short" });
+
+			last7Days.push({
+				date: dateKey,
+				label: formattedDate,
+				day: dayName,
+				count: countsByDate.get(dateKey) || 0,
+			});
+		}
 
 		res.json({
 			success: true,
@@ -49,7 +79,7 @@ router.get("/dashboard", async (req, res) => {
 				femaleCount,
 				todayRegistrations,
 				totalSchools,
-				last7Days: last7Days.map((d: any) => ({ date: d._id, count: d.count })),
+				last7Days,
 			},
 		});
 	} catch (error) {
