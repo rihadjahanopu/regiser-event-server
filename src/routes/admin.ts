@@ -3,6 +3,7 @@ import { auth } from "../config/auth.js";
 import { cloudinary, upload } from "../config/cloudinary.js";
 import { Registration } from "../models/Registration.js";
 import Settings from "../models/Settings.js";
+import { Certificate } from "../models/Certificate.js";
 
 const router = Router();
 
@@ -311,6 +312,124 @@ router.delete("/settings/cover", async (_req, res) => {
 	}
 });
 
+// ── President Signature Upload ──────────────────────────────────────────────
+router.post("/settings/signature/president", upload.single("signature"), async (req, res) => {
+	try {
+		if (!req.file) {
+			return res.status(400).json({ success: false, error: "No file uploaded" });
+		}
+
+		// Delete old signature from Cloudinary if exists
+		const existing = await Settings.findOne({});
+		if ((existing as any)?.presidentSignaturePublicId) {
+			await cloudinary.uploader.destroy((existing as any).presidentSignaturePublicId);
+		}
+
+		// Stream buffer to Cloudinary
+		const uploadResult = await new Promise<any>((resolve, reject) => {
+			const stream = cloudinary.uploader.upload_stream(
+				{ folder: "talamij/signatures", resource_type: "image" },
+				(error, result) => {
+					if (error) reject(error);
+					else resolve(result);
+				}
+			);
+			stream.end(req.file!.buffer);
+		});
+
+		const settings = await Settings.findOneAndUpdate(
+			{},
+			{
+				presidentSignatureUrl: uploadResult.secure_url,
+				presidentSignaturePublicId: uploadResult.public_id,
+			},
+			{ upsert: true, new: true }
+		);
+
+		res.json({ success: true, data: settings });
+	} catch (error: any) {
+		console.error("Error uploading president signature:", error);
+		res.status(500).json({ success: false, error: "Failed to upload president signature" });
+	}
+});
+
+// ── President Signature Delete ──────────────────────────────────────────────
+router.delete("/settings/signature/president", async (_req, res) => {
+	try {
+		const settings = await Settings.findOne({});
+		if ((settings as any)?.presidentSignaturePublicId) {
+			await cloudinary.uploader.destroy((settings as any).presidentSignaturePublicId);
+		}
+		await Settings.findOneAndUpdate(
+			{},
+			{ presidentSignatureUrl: "", presidentSignaturePublicId: "" },
+			{ upsert: true }
+		);
+		res.json({ success: true, message: "President signature deleted" });
+	} catch (error: any) {
+		res.status(500).json({ success: false, error: "Failed to delete president signature" });
+	}
+});
+
+// ── Secretary Signature Upload ──────────────────────────────────────────────
+router.post("/settings/signature/secretary", upload.single("signature"), async (req, res) => {
+	try {
+		if (!req.file) {
+			return res.status(400).json({ success: false, error: "No file uploaded" });
+		}
+
+		// Delete old signature from Cloudinary if exists
+		const existing = await Settings.findOne({});
+		if ((existing as any)?.secretarySignaturePublicId) {
+			await cloudinary.uploader.destroy((existing as any).secretarySignaturePublicId);
+		}
+
+		// Stream buffer to Cloudinary
+		const uploadResult = await new Promise<any>((resolve, reject) => {
+			const stream = cloudinary.uploader.upload_stream(
+				{ folder: "talamij/signatures", resource_type: "image" },
+				(error, result) => {
+					if (error) reject(error);
+					else resolve(result);
+				}
+			);
+			stream.end(req.file!.buffer);
+		});
+
+		const settings = await Settings.findOneAndUpdate(
+			{},
+			{
+				secretarySignatureUrl: uploadResult.secure_url,
+				secretarySignaturePublicId: uploadResult.public_id,
+			},
+			{ upsert: true, new: true }
+		);
+
+		res.json({ success: true, data: settings });
+	} catch (error: any) {
+		console.error("Error uploading secretary signature:", error);
+		res.status(500).json({ success: false, error: "Failed to upload secretary signature" });
+	}
+});
+
+// ── Secretary Signature Delete ──────────────────────────────────────────────
+router.delete("/settings/signature/secretary", async (_req, res) => {
+	try {
+		const settings = await Settings.findOne({});
+		if ((settings as any)?.secretarySignaturePublicId) {
+			await cloudinary.uploader.destroy((settings as any).secretarySignaturePublicId);
+		}
+		await Settings.findOneAndUpdate(
+			{},
+			{ secretarySignatureUrl: "", secretarySignaturePublicId: "" },
+			{ upsert: true }
+		);
+		res.json({ success: true, message: "Secretary signature deleted" });
+	} catch (error: any) {
+		res.status(500).json({ success: false, error: "Failed to delete secretary signature" });
+	}
+});
+
 // ── Toggle Registration Status ──────────────────────────────────────────────
 router.put("/settings/status", async (req, res) => {
 	try {
@@ -350,6 +469,12 @@ router.put("/settings/event", async (req, res) => {
 			eventStartTime,
 			organiserContact,
 			showCountdown,
+			presidentName,
+			presidentTitle,
+			presidentSignatureUrl,
+			secretaryName,
+			secretaryTitle,
+			secretarySignatureUrl,
 		} = req.body;
 
 		const settings = await Settings.findOneAndUpdate(
@@ -362,6 +487,12 @@ router.put("/settings/event", async (req, res) => {
 				organiserContact: organiserContact ?? "",
 				showCountdown:
 					typeof showCountdown === "boolean" ? showCountdown : true,
+				presidentName: presidentName ?? "President",
+				presidentTitle: presidentTitle ?? "President, Chhatak Uttar",
+				presidentSignatureUrl: presidentSignatureUrl ?? "",
+				secretaryName: secretaryName ?? "General Secretary",
+				secretaryTitle: secretaryTitle ?? "General Secretary, Chhatak Uttar",
+				secretarySignatureUrl: secretarySignatureUrl ?? "",
 			},
 			{ upsert: true, new: true }
 		);
@@ -468,6 +599,245 @@ router.put("/settings/field-config", async (req, res) => {
 				success: false,
 				error: "Failed to update field config: " + error.message,
 			});
+	}
+});
+
+// ── GET Registrations with Certificate Status ─────────────────────────────
+router.get("/certificates/registrations", async (req, res) => {
+	try {
+		const page = parseInt(req.query.page as string) || 1;
+		const limit = parseInt(req.query.limit as string) || 10;
+		const search = (req.query.search as string) || "";
+		const status = (req.query.status as string) || "";
+		const eventFilter = (req.query.event as string) || "Active";
+
+		// Fetch active settings to know the active event name
+		const settings = await Settings.findOne({});
+		const activeEventName = settings?.eventName || "Active Event";
+
+		let registrationIdsToFilter: string[] | null = null;
+
+		// If filtering by a specific past event, find registrations that have a certificate for that event
+		if (eventFilter !== "All" && eventFilter !== "Active" && eventFilter !== activeEventName) {
+			const certs = await Certificate.find({ eventName: eventFilter }).distinct("registrationId");
+			registrationIdsToFilter = certs.map((id) => String(id));
+		}
+
+		let query: any = {};
+		if (search) {
+			query.$or = [
+				{ fullName: { $regex: search, $options: "i" } },
+				{ mobile: { $regex: search, $options: "i" } },
+				{ registrationId: { $regex: search, $options: "i" } },
+			];
+		}
+
+		if (status && status !== "All") {
+			query.status = status;
+		}
+
+		if (registrationIdsToFilter !== null) {
+			query.registrationId = { $in: registrationIdsToFilter };
+		}
+
+		const skip = (page - 1) * limit;
+
+		const [registrations, total] = await Promise.all([
+			Registration.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+			Registration.countDocuments(query),
+		]);
+
+		// For the fetched registrations, look up their certificates
+		const regIds = registrations.map((r) => r.registrationId);
+		const certificates = await Certificate.find({ registrationId: { $in: regIds } }).lean();
+
+		const certificatesMap = new Map();
+		certificates.forEach((c) => {
+			certificatesMap.set(c.registrationId, c);
+		});
+
+		const data = registrations.map((r) => ({
+			...r,
+			certificate: certificatesMap.get(r.registrationId) || null,
+		}));
+
+		// Return unique events list for the Event Selector dropdown
+		const pastEvents = await Certificate.distinct("eventName");
+		const allEvents = Array.from(new Set([activeEventName, ...pastEvents])).filter(Boolean);
+
+		res.json({
+			success: true,
+			data,
+			total,
+			page,
+			limit,
+			totalPages: Math.ceil(total / limit),
+			events: allEvents,
+			activeEvent: {
+				id: settings?._id || "active",
+				name: activeEventName,
+				date: settings?.eventDate || "",
+				address: settings?.eventAddress || "",
+				presidentName: settings?.presidentName || "President",
+				presidentTitle: settings?.presidentTitle || "President, Chhatak Uttar",
+				presidentSignatureUrl: settings?.presidentSignatureUrl || "",
+				secretaryName: settings?.secretaryName || "General Secretary",
+				secretaryTitle: settings?.secretaryTitle || "General Secretary, Chhatak Uttar",
+				secretarySignatureUrl: settings?.secretarySignatureUrl || "",
+			},
+		});
+	} catch (error: any) {
+		console.error("Error fetching registrations for certificates:", error);
+		res.status(500).json({ success: false, error: "Failed to fetch participants list" });
+	}
+});
+
+// ── GET Certificate History ───────────────────────────────────────────────
+router.get("/certificates", async (req, res) => {
+	try {
+		const page = parseInt(req.query.page as string) || 1;
+		const limit = parseInt(req.query.limit as string) || 10;
+		const search = (req.query.search as string) || "";
+		const eventFilter = (req.query.event as string) || "";
+
+		const skip = (page - 1) * limit;
+
+		let query: any = {};
+
+		if (search) {
+			query.$or = [
+				{ fullName: { $regex: search, $options: "i" } },
+				{ certificateId: { $regex: search, $options: "i" } },
+				{ registrationId: { $regex: search, $options: "i" } },
+			];
+		}
+
+		if (eventFilter && eventFilter !== "All") {
+			query.eventName = eventFilter;
+		}
+
+		const [certificates, total] = await Promise.all([
+			Certificate.find(query).sort({ generatedDate: -1 }).skip(skip).limit(limit).lean(),
+			Certificate.countDocuments(query),
+		]);
+
+		res.json({
+			success: true,
+			data: certificates,
+			total,
+			page,
+			limit,
+			totalPages: Math.ceil(total / limit),
+		});
+	} catch (error: any) {
+		console.error("Error fetching certificates:", error);
+		res.status(500).json({ success: false, error: "Failed to fetch certificate history" });
+	}
+});
+
+// ── POST Generate Certificates ────────────────────────────────────────────
+router.post("/certificates/generate", async (req, res) => {
+	try {
+		const { registrationIds, generatedByAdmin } = req.body;
+
+		if (!registrationIds || !Array.isArray(registrationIds) || registrationIds.length === 0) {
+			return res.status(400).json({ success: false, error: "Missing registrationIds" });
+		}
+
+		if (!generatedByAdmin) {
+			return res.status(400).json({ success: false, error: "Missing generatedByAdmin field" });
+		}
+
+		// Fetch active settings to populate event info
+		const settings = await Settings.findOne({});
+		if (!settings || !settings.eventName) {
+			return res.status(400).json({
+				success: false,
+				error: "Please configure Event details in Settings before generating certificates.",
+			});
+		}
+
+		const eventId = String(settings._id);
+		const eventName = settings.eventName;
+		const eventDate = settings.eventDate || "";
+		const eventAddress = settings.eventAddress || "";
+
+		// Fetch registrations matching the input IDs
+		const registrations = await Registration.find({ registrationId: { $in: registrationIds } });
+
+		if (registrations.length === 0) {
+			return res.status(404).json({ success: false, error: "No registrations found for the provided IDs" });
+		}
+
+		const generatedCertificates = [];
+		const errors = [];
+
+		for (const reg of registrations) {
+			try {
+				// Check if certificate already exists for this registration ID and event name
+				let cert = await Certificate.findOne({ registrationId: reg.registrationId, eventName });
+
+				if (!cert) {
+					// Generate a unique Certificate ID
+					let uniqueId = "";
+					let isUnique = false;
+					while (!isUnique) {
+						const randomSuffix = Math.random().toString(36).substring(2, 10).toUpperCase();
+						uniqueId = `CERT-${randomSuffix}`;
+						const existing = await Certificate.findOne({ certificateId: uniqueId });
+						if (!existing) {
+							isUnique = true;
+						}
+					}
+
+					cert = new Certificate({
+						certificateId: uniqueId,
+						registrationId: reg.registrationId,
+						fullName: reg.fullName,
+						eventId,
+						eventName,
+						eventDate,
+						eventAddress,
+						generatedByAdmin,
+					});
+
+					await cert.save();
+				}
+
+				generatedCertificates.push(cert);
+			} catch (err: any) {
+				console.error(`Error generating certificate for ${reg.registrationId}:`, err);
+				errors.push({ registrationId: reg.registrationId, error: err.message });
+			}
+		}
+
+		res.json({
+			success: true,
+			message: `Successfully generated ${generatedCertificates.length} certificates.`,
+			certificates: generatedCertificates,
+			errors: errors.length > 0 ? errors : undefined,
+		});
+	} catch (error: any) {
+		console.error("Error in certificate generation:", error);
+		res.status(500).json({ success: false, error: "Failed to generate certificates" });
+	}
+});
+
+// ── DELETE Revoke/Delete Certificate ──────────────────────────────────────
+router.delete("/certificates/:certificateId", async (req, res) => {
+	try {
+		const { certificateId } = req.params;
+
+		const deleted = await Certificate.findOneAndDelete({ certificateId });
+
+		if (!deleted) {
+			return res.status(404).json({ success: false, error: "Certificate not found" });
+		}
+
+		res.json({ success: true, message: "Certificate revoked successfully" });
+	} catch (error: any) {
+		console.error("Error deleting certificate:", error);
+		res.status(500).json({ success: false, error: "Failed to revoke certificate" });
 	}
 });
 

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { Registration } from "../models/Registration.js";
+import { Certificate } from "../models/Certificate.js";
 
 const router = Router();
 
@@ -58,6 +59,29 @@ router.get("/verify/:id", async (req, res) => {
   } catch (error: any) {
     console.error("Fetch error:", error);
     res.status(500).json({ success: false, error: "Failed to fetch details" });
+  }
+});
+
+// Get certificate verification details (Public QR code scanner endpoint)
+router.get("/verify/certificate/:certificateId", async (req, res) => {
+  try {
+    const { certificateId } = req.params;
+    const certificate = await Certificate.findOne({ certificateId }).lean();
+
+    if (!certificate) {
+      return res.status(404).json({ success: false, error: "Certificate not found or invalid" });
+    }
+
+    const registration = await Registration.findOne({ registrationId: certificate.registrationId }).lean();
+
+    res.json({
+      success: true,
+      certificate,
+      registration: registration || null,
+    });
+  } catch (error: any) {
+    console.error("Certificate verification error:", error);
+    res.status(500).json({ success: false, error: "Failed to verify certificate" });
   }
 });
 

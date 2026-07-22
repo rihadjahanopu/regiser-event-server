@@ -38,6 +38,39 @@ const settingsSchema = new mongoose.Schema(
 			type: Boolean,
 			default: true,
 		},
+		// Signature & Authority Config
+		presidentName: {
+			type: String,
+			default: "President",
+		},
+		presidentTitle: {
+			type: String,
+			default: "President, Chhatak Uttar",
+		},
+		presidentSignatureUrl: {
+			type: String,
+			default: "",
+		},
+		presidentSignaturePublicId: {
+			type: String,
+			default: "",
+		},
+		secretaryName: {
+			type: String,
+			default: "General Secretary",
+		},
+		secretaryTitle: {
+			type: String,
+			default: "General Secretary, Chhatak Uttar",
+		},
+		secretarySignatureUrl: {
+			type: String,
+			default: "",
+		},
+		secretarySignaturePublicId: {
+			type: String,
+			default: "",
+		},
 		fieldConfig: {
 			type: mongoose.Schema.Types.Mixed,
 			default: {
