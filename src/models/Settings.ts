@@ -14,6 +14,30 @@ const settingsSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    eventName: {
+      type: String,
+      default: "",
+    },
+    eventAddress: {
+      type: String,
+      default: "",
+    },
+    eventDate: {
+      type: String,
+      default: "",
+    },
+    eventStartTime: {
+      type: String,
+      default: "",
+    },
+    organiserContact: {
+      type: String,
+      default: "",
+    },
+    showCountdown: {
+      type: Boolean,
+      default: true,
+    },
   },
   { timestamps: true }
 );

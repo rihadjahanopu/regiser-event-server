@@ -20,6 +20,7 @@ export interface IRegistration extends Document {
   passingYear?: string;
   gradeGpa?: string;
   rollNumber?: string;
+  regNumber?: string;
   registrationDate: Date;
   qrCode: string;
   status: "Verified" | "Pending" | "Invalid";
@@ -48,6 +49,7 @@ const RegistrationSchema: Schema = new Schema(
     passingYear: { type: String },
     gradeGpa: { type: String },
     rollNumber: { type: String },
+    regNumber: { type: String },
     registrationDate: { type: Date, default: Date.now },
     qrCode: { type: String, required: true },
     status: {

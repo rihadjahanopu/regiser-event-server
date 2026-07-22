@@ -274,4 +274,59 @@ router.put("/settings/status", async (req, res) => {
   }
 });
 
+// ── Update Event Info Settings ─────────────────────────────────────────────
+router.put("/settings/event", async (req, res) => {
+  try {
+    const {
+      eventName,
+      eventAddress,
+      eventDate,
+      eventStartTime,
+      organiserContact,
+      showCountdown,
+    } = req.body;
+
+    const settings = await Settings.findOneAndUpdate(
+      {},
+      {
+        eventName: eventName ?? "",
+        eventAddress: eventAddress ?? "",
+        eventDate: eventDate ?? "",
+        eventStartTime: eventStartTime ?? "",
+        organiserContact: organiserContact ?? "",
+        showCountdown: typeof showCountdown === "boolean" ? showCountdown : true,
+      },
+      { upsert: true, new: true }
+    );
+
+    res.json({ success: true, data: settings });
+  } catch (error: any) {
+    console.error("Error updating event settings:", error);
+    res.status(500).json({ success: false, error: "Failed to update event settings: " + error.message });
+  }
+});
+
+// ── Delete/Clear Event Info Settings ───────────────────────────────────────
+router.delete("/settings/event", async (_req, res) => {
+  try {
+    const settings = await Settings.findOneAndUpdate(
+      {},
+      {
+        eventName: "",
+        eventAddress: "",
+        eventDate: "",
+        eventStartTime: "",
+        organiserContact: "",
+        showCountdown: true,
+      },
+      { upsert: true, new: true }
+    );
+
+    res.json({ success: true, message: "Event details cleared", data: settings });
+  } catch (error: any) {
+    console.error("Error clearing event settings:", error);
+    res.status(500).json({ success: false, error: "Failed to clear event settings" });
+  }
+});
+
 export default router;
