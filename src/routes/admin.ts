@@ -389,21 +389,38 @@ router.put("/settings/field-config", async (req, res) => {
 		}
 
 		const ALLOWED_FIELDS = [
+			"fullName",
+			"mobile",
 			"email",
+			"gender",
 			"dob",
 			"fatherName",
+			"schoolName",
+			"class",
+			"subjectGroup",
 			"rollNumber",
 			"regNumber",
 			"bloodGroup",
 			"emergencyContact",
 			"passingYear",
 			"gradeGpa",
+			"address",
+			"district",
 		];
 
-		const sanitized: Record<string, boolean> = {};
+		const sanitized: Record<string, { required: boolean; enabled: boolean }> = {};
 		for (const key of ALLOWED_FIELDS) {
-			sanitized[key] =
-				typeof fieldConfig[key] === "boolean" ? fieldConfig[key] : false;
+			const val = fieldConfig[key];
+			if (typeof val === "boolean") {
+				sanitized[key] = { required: val, enabled: true };
+			} else if (val && typeof val === "object") {
+				sanitized[key] = {
+					required: Boolean(val.required),
+					enabled: typeof val.enabled === "boolean" ? val.enabled : true,
+				};
+			} else {
+				sanitized[key] = { required: false, enabled: true };
+			}
 		}
 
 		const settings = await Settings.findOneAndUpdate(
