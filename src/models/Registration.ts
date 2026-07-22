@@ -6,12 +6,12 @@ export interface IRegistration extends Document {
   fullName: string;
   mobile: string;
   email?: string;
-  gender: string;
-  address: string;
-  district: string;
-  schoolName: string;
-  class: string;
-  subjectGroup: string;
+  gender?: string;
+  address?: string;
+  district?: string;
+  schoolName?: string;
+  class?: string;
+  subjectGroup?: string;
   fatherName?: string;
   motherName?: string;
   bloodGroup?: string;
@@ -35,12 +35,12 @@ const RegistrationSchema: Schema = new Schema(
     fullName: { type: String, required: true },
     mobile: { type: String, required: true, unique: true },
     email: { type: String },
-    gender: { type: String, required: true },
-    address: { type: String, required: true },
-    district: { type: String, required: true },
-    schoolName: { type: String, required: true },
-    class: { type: String, required: true },
-    subjectGroup: { type: String, required: true },
+    gender: { type: String },
+    address: { type: String },
+    district: { type: String },
+    schoolName: { type: String },
+    class: { type: String },
+    subjectGroup: { type: String },
     fatherName: { type: String },
     motherName: { type: String },
     bloodGroup: { type: String },
