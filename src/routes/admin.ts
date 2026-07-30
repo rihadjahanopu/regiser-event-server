@@ -35,9 +35,7 @@ const requireAdmin = async (req: any, res: any, next: any) => {
 router.use((req, res, next) => {
   if (
     req.path === "/register" ||
-    req.path === "/register/" ||
-    req.path === "/claim-admin-role" ||
-    req.path === "/claim-admin-role/"
+    req.path === "/register/"
   ) {
     return next();
   }
