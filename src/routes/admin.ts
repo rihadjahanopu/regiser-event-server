@@ -12,6 +12,7 @@ import Tag from "../models/Tag.js";
 import { Admin } from "../models/Admin.js";
 import GalleryImage from "../models/GalleryImage.js";
 import TeamMember from "../models/TeamMember.js";
+import { getDb } from "../config/db.js";
 
 const router = Router();
 
@@ -270,7 +271,7 @@ router.post("/register", async (req, res) => {
 		}
 
 		// Explicitly set role = "admin" in user and Admin collection
-		const db = mongoose.connection.db;
+		const db = await getDb();
 		if (db) {
 			await db.collection("user").updateOne(
 				{ email },
@@ -309,8 +310,7 @@ router.post("/claim-admin-role", async (req, res) => {
 			return res.status(403).json({ success: false, error: "You can only grant admin to your own account" });
 		}
 
-		const db = mongoose.connection.db;
-		if (!db) return res.status(500).json({ success: false, error: "DB not ready" });
+		const db = await getDb();
 
 		await db.collection("user").updateOne({ email }, { $set: { role: "admin" } });
 		await Admin.findOneAndUpdate({ email }, { email, role: "admin" }, { upsert: true });
@@ -1239,8 +1239,7 @@ router.delete("/certificates/:certificateId", async (req, res) => {
 // ── Admin User Management ───────────────────────────────────────────────────
 router.get("/users", async (req, res) => {
   try {
-    const db = mongoose.connection.db;
-    if (!db) return res.status(500).json({ success: false, error: "DB not ready" });
+    const db = await getDb();
 
     // Sync roles for users present in Admin collection so legacy admins get role="admin"
     const adminDocs = await Admin.find({});
@@ -1265,8 +1264,7 @@ router.put("/users/:id/role", async (req, res) => {
     const { role } = req.body;
     if (!role) return res.status(400).json({ success: false, error: "Role is required" });
     
-    const db = mongoose.connection.db;
-    if (!db) return res.status(500).json({ success: false, error: "DB not ready" });
+    const db = await getDb();
     
     await db.collection("user").updateOne({ _id: new mongoose.Types.ObjectId(id) }, { $set: { role } });
     res.json({ success: true, message: "User role updated successfully" });
@@ -1278,8 +1276,7 @@ router.put("/users/:id/role", async (req, res) => {
 router.delete("/users/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const db = mongoose.connection.db;
-    if (!db) return res.status(500).json({ success: false, error: "DB not ready" });
+    const db = await getDb();
     
     await db.collection("user").deleteOne({ _id: new mongoose.Types.ObjectId(id) });
     await db.collection("session").deleteMany({ userId: id });
@@ -1450,13 +1447,12 @@ router.delete("/comments/:commentId", async (req, res) => {
 router.get("/sessions", async (req, res) => {
   try {
     const userId = req.session!.user.id;
-    const db = mongoose.connection.db;
-    if (!db) return res.status(500).json({ success: false, error: "DB not ready" });
+    const db = await getDb();
 
     const sessions = await db.collection("session").find({ userId }).sort({ createdAt: -1 }).toArray();
     const currentToken = (req.session!.session as any).token;
 
-    const data = sessions.map(s => ({
+    const data = sessions.map((s: any) => ({
       id: s._id || s.id,
       userAgent: s.userAgent || "Unknown Device",
       ipAddress: s.ipAddress || "Unknown IP",
@@ -1474,8 +1470,7 @@ router.post("/sessions/revoke-all", async (req, res) => {
   try {
     const userId = req.session!.user.id;
     const currentToken = (req.session!.session as any).token;
-    const db = mongoose.connection.db;
-    if (!db) return res.status(500).json({ success: false, error: "DB not ready" });
+    const db = await getDb();
 
     await db.collection("session").deleteMany({ userId, token: { $ne: currentToken } });
     res.json({ success: true, message: "Logged out from all other devices successfully" });

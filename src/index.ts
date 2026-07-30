@@ -36,10 +36,21 @@ app.use(cors({
   credentials: true,
 }));
 
-// Connect to MongoDB
-mongoose.connect(process.env.MONGO_URI || process.env.MONGODB_URI || "mongodb://localhost:27017/talamij")
-  .then(() => console.log("Connected to MongoDB"))
-  .catch(err => console.error("MongoDB connection error:", err));
+import { connectDB } from "./config/db.js";
+
+// Ensure database connection is established before processing API requests
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (err: any) {
+    console.error("Database connection middleware failure:", err);
+    if (req.path.startsWith("/api/")) {
+      return res.status(503).json({ success: false, error: "Database connection failed. Please try again." });
+    }
+    next();
+  }
+});
 
 // Basic route
 app.get("/", (req, res) => {

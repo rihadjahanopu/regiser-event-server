@@ -5,6 +5,7 @@ import { cloudinary, upload } from "../config/cloudinary.js";
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 import Blog from "../models/Blog.js";
+import { getDb } from "../config/db.js";
 
 const router = Router();
 
@@ -68,10 +69,7 @@ router.put("/profile", requireAuth, upload.single("image"), async (req: any, res
     }
 
     // Direct update in better-auth's user collection in MongoDB
-    const db = mongoose.connection.db;
-    if (!db) {
-      throw new Error("Database connection not ready");
-    }
+    const db = await getDb();
 
     let queryId: any = userId;
     if (mongoose.Types.ObjectId.isValid(userId)) {
@@ -120,10 +118,7 @@ router.put("/settings", requireAuth, async (req, res) => {
     if (privacySettings !== undefined) updates.privacySettings = privacySettings;
     if (twoFactorEnabled !== undefined) updates.twoFactorEnabled = twoFactorEnabled;
 
-    const db = mongoose.connection.db;
-    if (!db) {
-      throw new Error("Database connection not ready");
-    }
+    const db = await getDb();
 
     await db.collection("user").updateOne(
       { _id: new mongoose.Types.ObjectId(userId) as any },
@@ -142,10 +137,7 @@ router.put("/settings", requireAuth, async (req, res) => {
 router.get("/sessions", requireAuth, async (req, res) => {
   try {
     const userId = (req as any).session.user.id;
-    const db = mongoose.connection.db;
-    if (!db) {
-      throw new Error("Database connection not ready");
-    }
+    const db = await getDb();
 
     const sessions = await db.collection("session")
       .find({ userId })
@@ -154,7 +146,7 @@ router.get("/sessions", requireAuth, async (req, res) => {
 
     // Map sessions to include readable browser info and identify current session
     const currentToken = (req as any).session.session.token;
-    const sessionList = sessions.map(s => ({
+    const sessionList = sessions.map((s: any) => ({
       id: s._id || s.id,
       userAgent: s.userAgent || "Unknown Device",
       ipAddress: s.ipAddress || "Unknown IP",
@@ -180,10 +172,7 @@ router.post("/sessions/revoke", requireAuth, async (req, res) => {
       return res.status(400).json({ success: false, error: "Session ID is required" });
     }
 
-    const db = mongoose.connection.db;
-    if (!db) {
-      throw new Error("Database connection not ready");
-    }
+    const db = await getDb();
 
     // Convert sessionId string to ObjectId if necessary
     let queryId: any = sessionId;
@@ -213,10 +202,7 @@ router.post("/sessions/revoke-all", requireAuth, async (req, res) => {
     const userId = (req as any).session.user.id;
     const currentToken = (req as any).session.session.token;
 
-    const db = mongoose.connection.db;
-    if (!db) {
-      throw new Error("Database connection not ready");
-    }
+    const db = await getDb();
 
     // Delete all sessions except the current active one
     await db.collection("session").deleteMany({
@@ -241,10 +227,7 @@ router.delete("/account", requireAuth, async (req, res) => {
       return res.status(400).json({ success: false, error: "Password confirmation is required to delete account" });
     }
 
-    const db = mongoose.connection.db;
-    if (!db) {
-      throw new Error("Database connection not ready");
-    }
+    const db = await getDb();
 
     // Retrieve full user record to verify password
     const user = await db.collection("user").findOne({ _id: new mongoose.Types.ObjectId(userId) as any });
