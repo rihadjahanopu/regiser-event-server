@@ -293,33 +293,7 @@ router.post("/register", async (req, res) => {
 	}
 });
 
-// Endpoint to claim/set admin role for admin login accounts
-router.post("/claim-admin-role", async (req, res) => {
-	try {
-		const { email } = req.body;
-		if (!email) return res.status(400).json({ success: false, error: "Email is required" });
 
-		// Require valid session — the caller must be logged in as the requested email
-		const session = await auth.api.getSession({
-			headers: fromNodeHeaders(req.headers),
-		});
-		if (!session || !session.user) {
-			return res.status(401).json({ success: false, error: "You must be logged in to perform this action" });
-		}
-		if (session.user.email !== email) {
-			return res.status(403).json({ success: false, error: "You can only grant admin to your own account" });
-		}
-
-		const db = await getDb();
-
-		await db.collection("user").updateOne({ email }, { $set: { role: "admin" } });
-		await Admin.findOneAndUpdate({ email }, { email, role: "admin" }, { upsert: true });
-
-		res.json({ success: true, message: "User role updated to admin successfully" });
-	} catch (error: any) {
-		res.status(500).json({ success: false, error: error.message || "Failed to update role" });
-	}
-});
 
 // ── Cover Image Upload ──────────────────────────────────────────────────────
 router.post("/settings/cover", upload.single("cover"), async (req, res) => {
@@ -1240,17 +1214,6 @@ router.delete("/certificates/:certificateId", async (req, res) => {
 router.get("/users", async (req, res) => {
   try {
     const db = await getDb();
-
-    // Sync roles for users present in Admin collection so legacy admins get role="admin"
-    const adminDocs = await Admin.find({});
-    const adminEmails = adminDocs.map((a: any) => a.email);
-    if (adminEmails.length > 0) {
-      await db.collection("user").updateMany(
-        { email: { $in: adminEmails } },
-        { $set: { role: "admin" } }
-      );
-    }
-
     const users = await db.collection("user").find({}).toArray();
     res.json({ success: true, data: users });
   } catch (error) {
