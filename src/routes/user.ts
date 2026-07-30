@@ -4,6 +4,7 @@ import { fromNodeHeaders } from "better-auth/node";
 import { cloudinary, upload } from "../config/cloudinary.js";
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
+import Blog from "../models/Blog.js";
 
 const router = Router();
 
@@ -72,11 +73,21 @@ router.put("/profile", requireAuth, upload.single("image"), async (req: any, res
       throw new Error("Database connection not ready");
     }
 
+    let queryId: any = userId;
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      queryId = new mongoose.Types.ObjectId(userId);
+    }
+    const userFilter = { $or: [{ _id: userId }, { _id: queryId }, { id: userId }] };
+
     // Check unique username if username is provided
     if (username) {
       const existingUser = await db.collection("user").findOne({
         username,
-        _id: { $ne: userId }
+        $and: [
+          { _id: { $ne: userId } },
+          { _id: { $ne: queryId } },
+          { id: { $ne: userId } }
+        ]
       });
       if (existingUser) {
         return res.status(400).json({ success: false, error: "Username already taken" });
@@ -84,11 +95,11 @@ router.put("/profile", requireAuth, upload.single("image"), async (req: any, res
     }
 
     await db.collection("user").updateOne(
-      { _id: userId },
+      userFilter,
       { $set: updates }
     );
 
-    const updatedUser = await db.collection("user").findOne({ _id: userId });
+    const updatedUser = await db.collection("user").findOne(userFilter);
 
     res.json({ success: true, user: updatedUser });
   } catch (error: any) {
@@ -264,6 +275,87 @@ router.delete("/account", requireAuth, async (req, res) => {
   } catch (error: any) {
     console.error("Error deleting account:", error);
     res.status(500).json({ success: false, error: error.message || "Failed to delete account" });
+  }
+});
+
+// 8. GET /notifications — Get dynamic notifications for user
+router.get("/notifications", requireAuth, async (req, res) => {
+  try {
+    const userId = (req as any).session.user.id;
+    const notifications: any[] = [];
+
+    // System Welcome Notification
+    notifications.push({
+      id: "sys-welcome",
+      type: "system",
+      title: "Welcome to Talamij Portal",
+      message: "Manage your blog articles, account preferences, and view reader engagement statistics.",
+      createdAt: (req as any).session.user.createdAt || new Date(),
+      read: true,
+      link: "/dashboard"
+    });
+
+    // Fetch user's blogs
+    const blogs = await Blog.find({ author: userId }).sort({ updatedAt: -1 });
+
+    for (const blog of blogs) {
+      if (blog.status === "Published") {
+        notifications.push({
+          id: `blog-pub-${blog._id}`,
+          type: "blog_published",
+          title: "Blog Published!",
+          message: `Your blog article "${blog.title}" has been reviewed, approved, and published live.`,
+          createdAt: blog.updatedAt,
+          read: false,
+          link: `/blog/${blog.slug}`
+        });
+      } else if (blog.status === "Rejected") {
+        notifications.push({
+          id: `blog-rej-${blog._id}`,
+          type: "blog_rejected",
+          title: "Blog Needs Revision",
+          message: `Your blog article "${blog.title}" was not approved. ${blog.rejectionReason ? `Reason: ${blog.rejectionReason}` : "Please check submission guidelines."}`,
+          createdAt: blog.updatedAt,
+          read: false,
+          link: `/dashboard/edit-blog/${blog._id}`
+        });
+      } else if (blog.status === "Reviewing") {
+        notifications.push({
+          id: `blog-rev-${blog._id}`,
+          type: "blog_review",
+          title: "Blog Under Review",
+          message: `Your blog article "${blog.title}" has been submitted and is currently being reviewed by admins.`,
+          createdAt: blog.updatedAt,
+          read: true,
+          link: `/dashboard/my-blogs`
+        });
+      }
+
+      // Comments on user's blog
+      if (blog.comments && blog.comments.length > 0) {
+        for (const comment of blog.comments) {
+          if (comment.userId !== userId) {
+            notifications.push({
+              id: `comment-${comment._id || comment.createdAt}`,
+              type: "comment",
+              title: "New Comment on Your Blog",
+              message: `${comment.userName || "A user"} commented: "${comment.content.substring(0, 60)}${comment.content.length > 60 ? "..." : ""}" on "${blog.title}"`,
+              createdAt: comment.createdAt,
+              read: false,
+              link: `/blog/${blog.slug}`
+            });
+          }
+        }
+      }
+    }
+
+    // Sort notifications by date descending
+    notifications.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    res.json({ success: true, data: notifications });
+  } catch (error: any) {
+    console.error("Error fetching notifications:", error);
+    res.status(500).json({ success: false, error: "Failed to fetch notifications" });
   }
 });
 
