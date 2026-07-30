@@ -17,16 +17,18 @@ const db = client.db();
 export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET || "super-secret-key-for-dev",
   plugins: [jwt()],
-  // baseURL is the URL of this API server (where /api/auth/* is mounted)
-  baseURL: process.env.API_URL || "http://localhost:5000",
+  /**
+   * baseURL: The URL where better-auth is accessible FROM THE CLIENT'S PERSPECTIVE.
+   * Since we use a Next.js proxy at /api/auth, the client sees auth on the frontend domain.
+   * In production: https://talamijbd.vercel.app
+   * In development: http://localhost:3000
+   */
+  baseURL: process.env.CLIENT_URL || "http://localhost:3000",
   trustedOrigins: [
-    // Next.js app (both local and production)
     process.env.CLIENT_URL || "http://localhost:3000",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    // Production Vercel
     "https://talamijbd.vercel.app",
-    // Any Vercel preview URL
     "https://*.vercel.app",
   ],
   database: mongodbAdapter(db),
