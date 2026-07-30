@@ -26,4 +26,53 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
   },
+  user: {
+    additionalFields: {
+      role: {
+        type: "string",
+        required: false,
+        defaultValue: "user",
+      },
+      username: {
+        type: "string",
+        required: false,
+      },
+      bio: {
+        type: "string",
+        required: false,
+      },
+      phoneNumber: {
+        type: "string",
+        required: false,
+      },
+      website: {
+        type: "string",
+        required: false,
+      },
+      location: {
+        type: "string",
+        required: false,
+      },
+      twoFactorEnabled: {
+        type: "boolean",
+        required: false,
+        defaultValue: false,
+      },
+      emailNotifications: {
+        type: "boolean",
+        required: false,
+        defaultValue: true,
+      },
+      pushNotifications: {
+        type: "boolean",
+        required: false,
+        defaultValue: true,
+      },
+      privacySettings: {
+        type: "string",
+        required: false,
+        defaultValue: "public",
+      },
+    },
+  },
 });

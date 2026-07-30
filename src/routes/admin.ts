@@ -4,8 +4,45 @@ import { cloudinary, upload } from "../config/cloudinary.js";
 import { Registration } from "../models/Registration.js";
 import Settings from "../models/Settings.js";
 import { Certificate } from "../models/Certificate.js";
+import { fromNodeHeaders } from "better-auth/node";
+import mongoose from "mongoose";
+import Blog from "../models/Blog.js";
+import Category from "../models/Category.js";
+import Tag from "../models/Tag.js";
+import { Admin } from "../models/Admin.js";
+import GalleryImage from "../models/GalleryImage.js";
+import TeamMember from "../models/TeamMember.js";
 
 const router = Router();
+
+// Secure admin middleware (except for registration)
+const requireAdmin = async (req: any, res: any, next: any) => {
+  try {
+    const session = await auth.api.getSession({
+      headers: fromNodeHeaders(req.headers),
+    });
+    if (!session || session.user.role !== "admin") {
+      return res.status(403).json({ success: false, error: "Forbidden: Admin access required" });
+    }
+    req.session = session;
+    next();
+  } catch (error) {
+    console.error("Admin authentication check failed:", error);
+    res.status(500).json({ success: false, error: "Authentication failure" });
+  }
+};
+
+router.use((req, res, next) => {
+  if (
+    req.path === "/register" ||
+    req.path === "/register/" ||
+    req.path === "/claim-admin-role" ||
+    req.path === "/claim-admin-role/"
+  ) {
+    return next();
+  }
+  requireAdmin(req, res, next);
+});
 
 // Get Dashboard Stats
 router.get("/dashboard", async (req, res) => {
@@ -223,9 +260,9 @@ router.post("/register", async (req, res) => {
 				.json({ success: false, error: "Missing required fields" });
 		}
 
-		// Use Better Auth's own signup so sessions work correctly
+		// Use Better Auth's own signup so sessions work correctly with role="admin"
 		const result = await auth.api.signUpEmail({
-			body: { name, email, password },
+			body: { name, email, password, role: "admin" } as any,
 		});
 
 		if (!result || !result.user) {
@@ -234,12 +271,55 @@ router.post("/register", async (req, res) => {
 				.json({ success: false, error: "Failed to create admin" });
 		}
 
+		// Explicitly set role = "admin" in user and Admin collection
+		const db = mongoose.connection.db;
+		if (db) {
+			await db.collection("user").updateOne(
+				{ email },
+				{ $set: { role: "admin" } }
+			);
+		}
+		await Admin.findOneAndUpdate(
+			{ email },
+			{ name, email, role: "admin" },
+			{ upsert: true }
+		);
+
 		res.json({ success: true, message: "Admin created successfully" });
 	} catch (error: any) {
 		console.error("Error creating admin:", error);
 		const msg =
 			error?.body?.message || error?.message || "Failed to create admin";
 		res.status(500).json({ success: false, error: msg });
+	}
+});
+
+// Endpoint to claim/set admin role for admin login accounts
+router.post("/claim-admin-role", async (req, res) => {
+	try {
+		const { email } = req.body;
+		if (!email) return res.status(400).json({ success: false, error: "Email is required" });
+
+		// Require valid session — the caller must be logged in as the requested email
+		const session = await auth.api.getSession({
+			headers: fromNodeHeaders(req.headers),
+		});
+		if (!session || !session.user) {
+			return res.status(401).json({ success: false, error: "You must be logged in to perform this action" });
+		}
+		if (session.user.email !== email) {
+			return res.status(403).json({ success: false, error: "You can only grant admin to your own account" });
+		}
+
+		const db = mongoose.connection.db;
+		if (!db) return res.status(500).json({ success: false, error: "DB not ready" });
+
+		await db.collection("user").updateOne({ email }, { $set: { role: "admin" } });
+		await Admin.findOneAndUpdate({ email }, { email, role: "admin" }, { upsert: true });
+
+		res.json({ success: true, message: "User role updated to admin successfully" });
+	} catch (error: any) {
+		res.status(500).json({ success: false, error: error.message || "Failed to update role" });
 	}
 });
 
@@ -312,7 +392,305 @@ router.delete("/settings/cover", async (_req, res) => {
 	}
 });
 
+// ── Navbar Logo Upload ──────────────────────────────────────────────────────
+router.post("/settings/logo", upload.single("logo"), async (req, res) => {
+	try {
+		if (!req.file) {
+			return res
+				.status(400)
+				.json({ success: false, error: "No file uploaded" });
+		}
+
+		const existing = await Settings.findOne({});
+		if (existing?.navbarLogoPublicId) {
+			await cloudinary.uploader.destroy(existing.navbarLogoPublicId);
+		}
+
+		const uploadResult = await new Promise<any>((resolve, reject) => {
+			const stream = cloudinary.uploader.upload_stream(
+				{ folder: "talamij/branding", resource_type: "image" },
+				(error, result) => {
+					if (error) reject(error);
+					else resolve(result);
+				}
+			);
+			stream.end(req.file!.buffer);
+		});
+
+		const settings = await Settings.findOneAndUpdate(
+			{},
+			{
+				navbarLogoUrl: uploadResult.secure_url,
+				navbarLogoPublicId: uploadResult.public_id,
+			},
+			{ upsert: true, new: true }
+		);
+
+		res.json({ success: true, data: settings });
+	} catch (error: any) {
+		console.error("Error uploading logo:", error);
+		res
+			.status(500)
+			.json({ success: false, error: "Failed to upload logo image" });
+	}
+});
+
+// ── Navbar Logo Delete ──────────────────────────────────────────────────────
+router.delete("/settings/logo", async (_req, res) => {
+	try {
+		const settings = await Settings.findOne({});
+		if (settings?.navbarLogoPublicId) {
+			await cloudinary.uploader.destroy(settings.navbarLogoPublicId);
+		}
+
+		await Settings.findOneAndUpdate(
+			{},
+			{ navbarLogoUrl: "", navbarLogoPublicId: "" },
+			{ upsert: true }
+		);
+
+		res.json({ success: true, message: "Navbar logo deleted" });
+	} catch (error: any) {
+		console.error("Error deleting logo:", error);
+		res
+			.status(500)
+			.json({ success: false, error: "Failed to delete navbar logo" });
+	}
+});
+
+// ── Certificate & Ticket Watermark Image Upload ─────────────────────────────
+router.post("/settings/watermark", upload.single("watermark"), async (req, res) => {
+	try {
+		if (!req.file) {
+			return res.status(400).json({ success: false, error: "No file uploaded" });
+		}
+
+		const existing = await Settings.findOne({});
+		if (existing?.watermarkPublicId) {
+			await cloudinary.uploader.destroy(existing.watermarkPublicId);
+		}
+
+		const uploadResult = await new Promise<any>((resolve, reject) => {
+			const stream = cloudinary.uploader.upload_stream(
+				{ folder: "talamij/branding", resource_type: "image" },
+				(error, result) => {
+					if (error) reject(error);
+					else resolve(result);
+				}
+			);
+			stream.end(req.file!.buffer);
+		});
+
+		const settings = await Settings.findOneAndUpdate(
+			{},
+			{
+				watermarkUrl: uploadResult.secure_url,
+				watermarkPublicId: uploadResult.public_id,
+			},
+			{ upsert: true, new: true }
+		);
+
+		res.json({ success: true, data: settings });
+	} catch (error: any) {
+		console.error("Error uploading watermark image:", error);
+		res.status(500).json({ success: false, error: "Failed to upload watermark image" });
+	}
+});
+
+// ── Watermark Image Delete ──────────────────────────────────────────────────
+router.delete("/settings/watermark", async (_req, res) => {
+	try {
+		const settings = await Settings.findOne({});
+		if (settings?.watermarkPublicId) {
+			await cloudinary.uploader.destroy(settings.watermarkPublicId);
+		}
+
+		await Settings.findOneAndUpdate(
+			{},
+			{ watermarkUrl: "", watermarkPublicId: "" },
+			{ upsert: true }
+		);
+
+		res.json({ success: true, message: "Watermark image removed" });
+	} catch (error: any) {
+		console.error("Error deleting watermark image:", error);
+		res.status(500).json({ success: false, error: "Failed to delete watermark image" });
+	}
+});
+
+// ── Dedicated Certificate Top Logo Upload ───────────────────────────────────
+router.post("/settings/cert-logo", upload.single("certLogo"), async (req, res) => {
+	try {
+		if (!req.file) {
+			return res.status(400).json({ success: false, error: "No file uploaded" });
+		}
+
+		const existing = await Settings.findOne({});
+		if (existing?.certTopLogoPublicId) {
+			await cloudinary.uploader.destroy(existing.certTopLogoPublicId);
+		}
+
+		const uploadResult = await new Promise<any>((resolve, reject) => {
+			const stream = cloudinary.uploader.upload_stream(
+				{ folder: "talamij/branding", resource_type: "image" },
+				(error, result) => {
+					if (error) reject(error);
+					else resolve(result);
+				}
+			);
+			stream.end(req.file!.buffer);
+		});
+
+		const settings = await Settings.findOneAndUpdate(
+			{},
+			{
+				certTopLogoUrl: uploadResult.secure_url,
+				certTopLogoPublicId: uploadResult.public_id,
+			},
+			{ upsert: true, new: true }
+		);
+
+		res.json({ success: true, data: settings });
+	} catch (error: any) {
+		console.error("Error uploading certificate top logo:", error);
+		res.status(500).json({ success: false, error: "Failed to upload certificate logo image" });
+	}
+});
+
+// ── Certificate Top Logo Delete ─────────────────────────────────────────────
+router.delete("/settings/cert-logo", async (_req, res) => {
+	try {
+		const settings = await Settings.findOne({});
+		if (settings?.certTopLogoPublicId) {
+			await cloudinary.uploader.destroy(settings.certTopLogoPublicId);
+		}
+
+		await Settings.findOneAndUpdate(
+			{},
+			{ certTopLogoUrl: "", certTopLogoPublicId: "" },
+			{ upsert: true }
+		);
+
+		res.json({ success: true, message: "Certificate top logo removed" });
+	} catch (error: any) {
+		console.error("Error deleting certificate top logo:", error);
+		res.status(500).json({ success: false, error: "Failed to delete certificate logo image" });
+	}
+});
+
+// ── About Cover Image Upload ─────────────────────────────────────────────────
+router.post("/settings/about-cover", upload.single("aboutCover"), async (req, res) => {
+	try {
+		if (!req.file) {
+			return res
+				.status(400)
+				.json({ success: false, error: "No file uploaded" });
+		}
+
+		const existing = await Settings.findOne({});
+		if (existing?.aboutCoverPublicId) {
+			await cloudinary.uploader.destroy(existing.aboutCoverPublicId);
+		}
+
+		const uploadResult = await new Promise<any>((resolve, reject) => {
+			const stream = cloudinary.uploader.upload_stream(
+				{ folder: "talamij/about", resource_type: "image" },
+				(error, result) => {
+					if (error) reject(error);
+					else resolve(result);
+				}
+			);
+			stream.end(req.file!.buffer);
+		});
+
+		const settings = await Settings.findOneAndUpdate(
+			{},
+			{
+				aboutCoverUrl: uploadResult.secure_url,
+				aboutCoverPublicId: uploadResult.public_id,
+			},
+			{ upsert: true, new: true }
+		);
+
+		res.json({ success: true, data: settings });
+	} catch (error: any) {
+		console.error("Error uploading about cover:", error);
+		res
+			.status(500)
+			.json({ success: false, error: "Failed to upload about cover image" });
+	}
+});
+
+// ── About Cover Image Delete ─────────────────────────────────────────────────
+router.delete("/settings/about-cover", async (_req, res) => {
+	try {
+		const settings = await Settings.findOne({});
+		if (settings?.aboutCoverPublicId) {
+			await cloudinary.uploader.destroy(settings.aboutCoverPublicId);
+		}
+
+		await Settings.findOneAndUpdate(
+			{},
+			{ aboutCoverUrl: "", aboutCoverPublicId: "" },
+			{ upsert: true }
+		);
+
+		res.json({ success: true, message: "About cover image deleted" });
+	} catch (error: any) {
+		console.error("Error deleting about cover:", error);
+		res
+			.status(500)
+			.json({ success: false, error: "Failed to delete about cover image" });
+	}
+});
+
 // ── President Signature Upload ──────────────────────────────────────────────
+router.post("/settings/board-member-photo", upload.single("photo"), async (req, res) => {
+	try {
+		if (!req.file) {
+			return res.status(400).json({ success: false, error: "No file uploaded" });
+		}
+
+		const uploadResult = await new Promise<any>((resolve, reject) => {
+			const stream = cloudinary.uploader.upload_stream(
+				{ folder: "talamij/board", resource_type: "image" },
+				(error, result) => {
+					if (error) reject(error);
+					else resolve(result);
+				}
+			);
+			stream.end(req.file!.buffer);
+		});
+
+		res.json({
+			success: true,
+			data: {
+				photoUrl: uploadResult.secure_url,
+				photoPublicId: uploadResult.public_id,
+			},
+		});
+	} catch (error: any) {
+		console.error("Error uploading board member photo:", error);
+		res.status(500).json({ success: false, error: "Failed to upload photo" });
+	}
+});
+
+// ── Board Member Photo Delete ────────────────────────────────────────────────
+router.delete("/settings/board-member-photo", async (req, res) => {
+	try {
+		const { publicId } = req.body;
+		if (publicId) {
+			await cloudinary.uploader.destroy(publicId);
+		}
+		res.json({ success: true, message: "Photo deleted" });
+	} catch (error: any) {
+		console.error("Error deleting board member photo:", error);
+		res.status(500).json({ success: false, error: "Failed to delete photo" });
+	}
+});
+
+// ── President Signature Upload ──────────────────────────────────────────────
+
 router.post("/settings/signature/president", upload.single("signature"), async (req, res) => {
 	try {
 		if (!req.file) {
@@ -506,6 +884,25 @@ router.put("/settings/event", async (req, res) => {
 				success: false,
 				error: "Failed to update event settings: " + error.message,
 			});
+	}
+});
+
+// ── Update Homepage Content & Visibility Settings ─────────────────────────────
+router.put("/settings/homepage", async (req, res) => {
+	try {
+		const updateData = req.body;
+		const settings = await Settings.findOneAndUpdate(
+			{},
+			{ $set: updateData },
+			{ upsert: true, new: true }
+		);
+		res.json({ success: true, data: settings });
+	} catch (error: any) {
+		console.error("Error updating homepage settings:", error);
+		res.status(500).json({
+			success: false,
+			error: "Failed to update homepage settings: " + error.message,
+		});
 	}
 });
 
@@ -839,6 +1236,464 @@ router.delete("/certificates/:certificateId", async (req, res) => {
 		console.error("Error deleting certificate:", error);
 		res.status(500).json({ success: false, error: "Failed to revoke certificate" });
 	}
+});
+
+// ── Admin User Management ───────────────────────────────────────────────────
+router.get("/users", async (req, res) => {
+  try {
+    const db = mongoose.connection.db;
+    if (!db) return res.status(500).json({ success: false, error: "DB not ready" });
+
+    // Sync roles for users present in Admin collection so legacy admins get role="admin"
+    const adminDocs = await Admin.find({});
+    const adminEmails = adminDocs.map((a: any) => a.email);
+    if (adminEmails.length > 0) {
+      await db.collection("user").updateMany(
+        { email: { $in: adminEmails } },
+        { $set: { role: "admin" } }
+      );
+    }
+
+    const users = await db.collection("user").find({}).toArray();
+    res.json({ success: true, data: users });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to fetch users" });
+  }
+});
+
+router.put("/users/:id/role", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { role } = req.body;
+    if (!role) return res.status(400).json({ success: false, error: "Role is required" });
+    
+    const db = mongoose.connection.db;
+    if (!db) return res.status(500).json({ success: false, error: "DB not ready" });
+    
+    await db.collection("user").updateOne({ _id: new mongoose.Types.ObjectId(id) }, { $set: { role } });
+    res.json({ success: true, message: "User role updated successfully" });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to update role" });
+  }
+});
+
+router.delete("/users/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const db = mongoose.connection.db;
+    if (!db) return res.status(500).json({ success: false, error: "DB not ready" });
+    
+    await db.collection("user").deleteOne({ _id: new mongoose.Types.ObjectId(id) });
+    await db.collection("session").deleteMany({ userId: id });
+    await db.collection("account").deleteMany({ userId: id });
+    res.json({ success: true, message: "User deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to delete user" });
+  }
+});
+
+// ── Admin Blog Review ───────────────────────────────────────────────────────
+router.get("/blogs/review", async (req, res) => {
+  try {
+    const blogs = await Blog.find({ status: { $in: ["Reviewing", "Pending"] } })
+      .populate("author", "name email image")
+      .sort({ createdAt: -1 });
+    res.json({ success: true, data: blogs });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to fetch blogs for review" });
+  }
+});
+
+router.post("/blogs/review/:id/approve", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const blog = await Blog.findByIdAndUpdate(id, { status: "Published", rejectionReason: null }, { new: true });
+    if (!blog) return res.status(404).json({ success: false, error: "Blog not found" });
+    res.json({ success: true, message: "Blog approved & published!", data: blog });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to approve blog" });
+  }
+});
+
+router.post("/blogs/review/:id/reject", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    const blog = await Blog.findByIdAndUpdate(id, { status: "Rejected", rejectionReason: reason }, { new: true });
+    if (!blog) return res.status(404).json({ success: false, error: "Blog not found" });
+    res.json({ success: true, message: "Blog rejected successfully", data: blog });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to reject blog" });
+  }
+});
+
+// ── Admin Blog Management ───────────────────────────────────────────────────
+router.get("/blogs/published", async (req, res) => {
+  try {
+    const blogs = await Blog.find({ status: "Published" })
+      .populate("author", "name email image")
+      .sort({ createdAt: -1 });
+    res.json({ success: true, data: blogs });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to fetch published blogs" });
+  }
+});
+
+router.delete("/blogs/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deleted = await Blog.findByIdAndDelete(id);
+    if (!deleted) return res.status(404).json({ success: false, error: "Blog not found" });
+    res.json({ success: true, message: "Blog deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to delete blog" });
+  }
+});
+
+// ── Admin Categories & Tags CRUD ───────────────────────────────────────────
+router.get("/categories", async (req, res) => {
+  try {
+    const categories = await Category.find({}).sort({ name: 1 });
+    res.json({ success: true, data: categories });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to fetch categories" });
+  }
+});
+
+router.post("/categories", async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ success: false, error: "Category name is required" });
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const category = await Category.create({ name, slug });
+    res.status(201).json({ success: true, data: category });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || "Failed to create category" });
+  }
+});
+
+router.delete("/categories/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    await Category.findByIdAndDelete(id);
+    res.json({ success: true, message: "Category deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to delete category" });
+  }
+});
+
+router.get("/tags", async (req, res) => {
+  try {
+    const tags = await Tag.find({}).sort({ name: 1 });
+    res.json({ success: true, data: tags });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to fetch tags" });
+  }
+});
+
+router.post("/tags", async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ success: false, error: "Tag name is required" });
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const tag = await Tag.create({ name, slug });
+    res.status(201).json({ success: true, data: tag });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || "Failed to create tag" });
+  }
+});
+
+router.delete("/tags/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    await Tag.findByIdAndDelete(id);
+    res.json({ success: true, message: "Tag deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to delete tag" });
+  }
+});
+
+// ── Admin Comments Management ────────────────────────────────────────────────
+router.get("/comments", async (req, res) => {
+  try {
+    // Find all blogs and extract comments with blog info
+    const blogs = await Blog.find({ "comments.0": { $exists: true } }).select("title comments slug");
+    const commentsList = blogs.flatMap(b => b.comments.map((c: any) => ({
+      id: c._id || (c as any).id,
+      blogId: b._id,
+      blogTitle: b.title,
+      blogSlug: b.slug,
+      userName: c.userName,
+      userImage: c.userImage,
+      content: c.content,
+      createdAt: c.createdAt
+    })));
+    res.json({ success: true, data: commentsList });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to fetch comments" });
+  }
+});
+
+router.delete("/comments/:commentId", async (req, res) => {
+  try {
+    const { commentId } = req.params;
+    // Pull the comment from whichever blog contains it
+    await Blog.updateOne(
+      { "comments._id": commentId },
+      { $pull: { comments: { _id: commentId } } }
+    );
+    res.json({ success: true, message: "Comment deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to delete comment" });
+  }
+});
+
+// ── Admin Sessions ──────────────────────────────────────────────────────────
+router.get("/sessions", async (req, res) => {
+  try {
+    const userId = req.session!.user.id;
+    const db = mongoose.connection.db;
+    if (!db) return res.status(500).json({ success: false, error: "DB not ready" });
+
+    const sessions = await db.collection("session").find({ userId }).sort({ createdAt: -1 }).toArray();
+    const currentToken = (req.session!.session as any).token;
+
+    const data = sessions.map(s => ({
+      id: s._id || s.id,
+      userAgent: s.userAgent || "Unknown Device",
+      ipAddress: s.ipAddress || "Unknown IP",
+      createdAt: s.createdAt,
+      isCurrent: s.token === currentToken
+    }));
+
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to fetch admin sessions" });
+  }
+});
+
+router.post("/sessions/revoke-all", async (req, res) => {
+  try {
+    const userId = req.session!.user.id;
+    const currentToken = (req.session!.session as any).token;
+    const db = mongoose.connection.db;
+    if (!db) return res.status(500).json({ success: false, error: "DB not ready" });
+
+    await db.collection("session").deleteMany({ userId, token: { $ne: currentToken } });
+    res.json({ success: true, message: "Logged out from all other devices successfully" });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to logout other devices" });
+  }
+});
+
+// ─── Gallery Routes ───────────────────────────────────────────────────────────
+
+// GET /api/admin/gallery — Fetch all gallery images
+router.get("/gallery", async (_req, res) => {
+  try {
+    const images = await GalleryImage.find({}).sort({ createdAt: -1 }).lean();
+    res.json({ success: true, data: images });
+  } catch (error) {
+    console.error("Error fetching gallery images:", error);
+    res.status(500).json({ success: false, error: "Failed to fetch gallery images" });
+  }
+});
+
+// POST /api/admin/gallery/upload — Upload image to Cloudinary + save to DB
+router.post("/gallery/upload", upload.single("image"), async (req: any, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: "No image file provided" });
+    }
+
+    const { title, category } = req.body;
+    if (!title || !category) {
+      return res.status(400).json({ success: false, error: "Title and category are required" });
+    }
+
+    // Upload buffer to Cloudinary
+    const uploadResult = await new Promise<any>((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        { folder: "gallery", resource_type: "image" },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      );
+      stream.end(req.file!.buffer);
+    });
+
+    const newImage = await GalleryImage.create({
+      title,
+      category,
+      imageUrl: uploadResult.secure_url,
+      publicId: uploadResult.public_id,
+    });
+
+    res.json({ success: true, data: newImage });
+  } catch (error) {
+    console.error("Error uploading gallery image:", error);
+    res.status(500).json({ success: false, error: "Failed to upload image" });
+  }
+});
+
+// DELETE /api/admin/gallery/:id — Delete from Cloudinary + DB
+router.delete("/gallery/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const image = await GalleryImage.findById(id);
+    if (!image) {
+      return res.status(404).json({ success: false, error: "Image not found" });
+    }
+
+    // Delete from Cloudinary
+    await cloudinary.uploader.destroy(image.publicId);
+
+    // Delete from DB
+    await GalleryImage.findByIdAndDelete(id);
+
+    res.json({ success: true, message: "Image deleted successfully" });
+  } catch (error) {
+    console.error("Error deleting gallery image:", error);
+    res.status(500).json({ success: false, error: "Failed to delete image" });
+  }
+});
+
+// ─── Team Member Routes ───────────────────────────────────────────────────────
+
+// GET /api/admin/team — Fetch all team members
+router.get("/team", requireAdmin, async (_req, res) => {
+  try {
+    const members = await TeamMember.find({}).sort({ order: 1, createdAt: 1 }).lean();
+    res.json({ success: true, data: members });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to fetch team members" });
+  }
+});
+
+// POST /api/admin/team — Create a team member (with optional image & signature)
+router.post("/team", requireAdmin, upload.fields([{ name: "image", maxCount: 1 }, { name: "signature", maxCount: 1 }]), async (req: any, res) => {
+  try {
+    const { name, role, designation, order } = req.body;
+    if (!name || !role) {
+      return res.status(400).json({ success: false, error: "Name and role are required" });
+    }
+
+    let imageUrl = "";
+    let publicId = "";
+    let signatureUrl = "";
+    let signaturePublicId = "";
+
+    // Upload photo
+    if (req.files?.image?.[0]) {
+      const result = await new Promise<any>((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          { folder: "team", resource_type: "image" },
+          (err, res) => (err ? reject(err) : resolve(res))
+        );
+        stream.end(req.files.image[0].buffer);
+      });
+      imageUrl = result.secure_url;
+      publicId = result.public_id;
+    }
+
+    // Upload signature
+    if (req.files?.signature?.[0]) {
+      const result = await new Promise<any>((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          { folder: "team/signatures", resource_type: "image" },
+          (err, res) => (err ? reject(err) : resolve(res))
+        );
+        stream.end(req.files.signature[0].buffer);
+      });
+      signatureUrl = result.secure_url;
+      signaturePublicId = result.public_id;
+    }
+
+    const member = await TeamMember.create({
+      name,
+      role,
+      designation: designation || "",
+      imageUrl,
+      publicId,
+      signatureUrl,
+      signaturePublicId,
+      order: order ? parseInt(order) : 0,
+    });
+
+    res.json({ success: true, data: member });
+  } catch (error) {
+    console.error("Error creating team member:", error);
+    res.status(500).json({ success: false, error: "Failed to create team member" });
+  }
+});
+
+// PUT /api/admin/team/:id — Update a team member
+router.put("/team/:id", requireAdmin, upload.fields([{ name: "image", maxCount: 1 }, { name: "signature", maxCount: 1 }]), async (req: any, res) => {
+  try {
+    const { id } = req.params;
+    const member = await TeamMember.findById(id);
+    if (!member) return res.status(404).json({ success: false, error: "Member not found" });
+
+    const { name, role, designation, order, isActive } = req.body;
+    if (name) member.name = name;
+    if (role) member.role = role;
+    if (designation !== undefined) member.designation = designation;
+    if (order !== undefined) member.order = parseInt(order);
+    if (isActive !== undefined) member.isActive = isActive === "true" || isActive === true;
+
+    // Replace photo
+    if (req.files?.image?.[0]) {
+      if (member.publicId) await cloudinary.uploader.destroy(member.publicId);
+      const result = await new Promise<any>((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          { folder: "team", resource_type: "image" },
+          (err, res) => (err ? reject(err) : resolve(res))
+        );
+        stream.end(req.files.image[0].buffer);
+      });
+      member.imageUrl = result.secure_url;
+      member.publicId = result.public_id;
+    }
+
+    // Replace signature
+    if (req.files?.signature?.[0]) {
+      if (member.signaturePublicId) await cloudinary.uploader.destroy(member.signaturePublicId);
+      const result = await new Promise<any>((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          { folder: "team/signatures", resource_type: "image" },
+          (err, res) => (err ? reject(err) : resolve(res))
+        );
+        stream.end(req.files.signature[0].buffer);
+      });
+      member.signatureUrl = result.secure_url;
+      member.signaturePublicId = result.public_id;
+    }
+
+    await member.save();
+    res.json({ success: true, data: member });
+  } catch (error) {
+    console.error("Error updating team member:", error);
+    res.status(500).json({ success: false, error: "Failed to update team member" });
+  }
+});
+
+// DELETE /api/admin/team/:id — Delete a team member
+router.delete("/team/:id", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const member = await TeamMember.findById(id);
+    if (!member) return res.status(404).json({ success: false, error: "Member not found" });
+
+    if (member.publicId) await cloudinary.uploader.destroy(member.publicId);
+    if (member.signaturePublicId) await cloudinary.uploader.destroy(member.signaturePublicId);
+    await TeamMember.findByIdAndDelete(id);
+
+    res.json({ success: true, message: "Team member deleted" });
+  } catch (error) {
+    console.error("Error deleting team member:", error);
+    res.status(500).json({ success: false, error: "Failed to delete team member" });
+  }
 });
 
 export default router;

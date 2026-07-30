@@ -7,6 +7,8 @@ import { auth } from "./config/auth.js";
 import registrationRoutes from "./routes/registration.js";
 import adminRoutes from "./routes/admin.js";
 import settingsRoutes from "./routes/settings.js";
+import blogRoutes from "./routes/blog.js";
+import userRoutes from "./routes/user.js";
 
 // Load environment variables
 dotenv.config();
@@ -24,8 +26,8 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (Vercel serverless, curl, etc.)
-    if (!origin || allowedOrigins.includes(origin)) {
+    // Allow requests with no origin (Vercel serverless, curl, etc.), matching allowedOrigins, or any *.vercel.app preview domain
+    if (!origin || allowedOrigins.includes(origin) || origin.endsWith(".vercel.app")) {
       callback(null, true);
     } else {
       callback(new Error(`CORS: ${origin} not allowed`));
@@ -51,6 +53,8 @@ app.use("/api/auth", toNodeHandler(auth));
 app.use("/api/registration", registrationRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/settings", settingsRoutes);
+app.use("/api/blog", blogRoutes);
+app.use("/api/user", userRoutes);
 
 // Start server locally (Vercel will use the exported app instead)
 if (!process.env.VERCEL && process.env.NODE_ENV !== "production") {
