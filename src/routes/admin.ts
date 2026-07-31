@@ -12,6 +12,7 @@ import Tag from "../models/Tag.js";
 import { Admin } from "../models/Admin.js";
 import GalleryImage from "../models/GalleryImage.js";
 import TeamMember from "../models/TeamMember.js";
+import Message from "../models/Message.js";
 import { getDb } from "../config/db.js";
 
 const router = Router();
@@ -1649,6 +1650,61 @@ router.delete("/team/:id", requireAdmin, async (req, res) => {
   } catch (error) {
     console.error("Error deleting team member:", error);
     res.status(500).json({ success: false, error: "Failed to delete team member" });
+  }
+});
+
+// GET /api/admin/messages — Fetch all contact messages
+router.get("/messages", requireAdmin, async (_req, res) => {
+  try {
+    const messages = await Message.find({}).sort({ createdAt: -1 }).lean();
+    const unreadCount = await Message.countDocuments({ isRead: false });
+    res.json({ success: true, data: messages, unreadCount });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to fetch messages" });
+  }
+});
+
+// GET /api/admin/messages/unread-count — For realtime notification badge & toast
+router.get("/messages/unread-count", requireAdmin, async (_req, res) => {
+  try {
+    const unreadCount = await Message.countDocuments({ isRead: false });
+    const latestUnread = await Message.findOne({ isRead: false }).sort({ createdAt: -1 }).lean();
+    res.json({ success: true, unreadCount, latestUnread });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to fetch unread count" });
+  }
+});
+
+// PATCH /api/admin/messages/:id/read — Mark single message as read
+router.patch("/messages/:id/read", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const msg = await Message.findByIdAndUpdate(id, { isRead: true }, { new: true });
+    if (!msg) return res.status(404).json({ success: false, error: "Message not found" });
+    res.json({ success: true, data: msg });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to update message" });
+  }
+});
+
+// PATCH /api/admin/messages/read-all — Mark all messages as read
+router.patch("/messages/read-all", requireAdmin, async (_req, res) => {
+  try {
+    await Message.updateMany({ isRead: false }, { isRead: true });
+    res.json({ success: true, message: "All messages marked as read" });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to mark all as read" });
+  }
+});
+
+// DELETE /api/admin/messages/:id — Delete a message
+router.delete("/messages/:id", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    await Message.findByIdAndDelete(id);
+    res.json({ success: true, message: "Message deleted" });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to delete message" });
   }
 });
 
