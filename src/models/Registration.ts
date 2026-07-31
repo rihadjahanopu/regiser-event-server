@@ -3,6 +3,8 @@ import mongoose, { Schema, Document, Model } from "mongoose";
 export interface IRegistration extends Document {
   registrationId: string;
   ticketNumber: string;
+  eventId?: mongoose.Types.ObjectId | string;
+  eventSlug?: string;
   fullName: string;
   mobile: string;
   email?: string;
@@ -24,6 +26,8 @@ export interface IRegistration extends Document {
   registrationDate: Date;
   qrCode: string;
   status: "Verified" | "Pending" | "Invalid";
+  attendance: "Present" | "Absent";
+  attendedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -32,6 +36,8 @@ const RegistrationSchema: Schema = new Schema(
   {
     registrationId: { type: String, required: true, unique: true },
     ticketNumber: { type: String, required: true, unique: true },
+    eventId: { type: Schema.Types.ObjectId, ref: "Event", index: true, default: null },
+    eventSlug: { type: String, index: true, default: "" },
     fullName: { type: String, required: true },
     mobile: { type: String, required: true, unique: true },
     email: { type: String },
@@ -57,6 +63,12 @@ const RegistrationSchema: Schema = new Schema(
       enum: ["Verified", "Pending", "Invalid"],
       default: "Verified",
     },
+    attendance: {
+      type: String,
+      enum: ["Present", "Absent"],
+      default: "Absent",
+    },
+    attendedAt: { type: Date, default: null },
   },
   {
     timestamps: true,

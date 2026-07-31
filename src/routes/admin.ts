@@ -4,6 +4,7 @@ import { cloudinary, upload } from "../config/cloudinary.js";
 import { Registration } from "../models/Registration.js";
 import Settings from "../models/Settings.js";
 import { Certificate } from "../models/Certificate.js";
+import { Event } from "../models/Event.js";
 import { fromNodeHeaders } from "better-auth/node";
 import mongoose from "mongoose";
 import Blog from "../models/Blog.js";
@@ -126,6 +127,250 @@ router.get("/dashboard", async (req, res) => {
 	}
 });
 
+// ── QR Code Attendance Check-in ────────────────────────────────────────────
+// POST /api/admin/attendance/scan — Scan QR Code and mark as Present
+router.post("/attendance/scan", requireAdmin, async (req, res) => {
+  try {
+    const { qrCode } = req.body;
+    if (!qrCode) {
+      return res.status(400).json({ success: false, error: "QR Code data is required" });
+    }
+
+    // qrCode value equals registrationId (see registration.ts → qrCode: registrationId)
+    const registration = await Registration.findOne({ registrationId: qrCode.trim() });
+
+    if (!registration) {
+      return res.status(404).json({ success: false, error: "Invalid QR Code — Registration not found" });
+    }
+
+    if (registration.attendance === "Present") {
+      return res.status(409).json({
+        success: false,
+        alreadyCheckedIn: true,
+        error: `${registration.fullName} is already marked Present at ${new Date(registration.attendedAt!).toLocaleTimeString("en-BD")}`,
+        registration,
+      });
+    }
+
+    registration.attendance = "Present";
+    registration.attendedAt = new Date();
+    await registration.save();
+
+    res.json({
+      success: true,
+      message: `✅ ${registration.fullName} successfully checked in!`,
+      registration,
+    });
+  } catch (error) {
+    console.error("QR scan error:", error);
+    res.status(500).json({ success: false, error: "Failed to process QR scan" });
+  }
+});
+
+// GET /api/admin/attendance — Get attendance summary + list
+router.get("/attendance", requireAdmin, async (req, res) => {
+  try {
+    const search = (req.query.search as string) || "";
+    const filter = (req.query.filter as string) || "All"; // All | Present | Absent
+    const eventId = (req.query.eventId as string) || "";
+    const eventSlug = (req.query.eventSlug as string) || "";
+
+    let query: any = {};
+    if (filter === "Present") query.attendance = "Present";
+    if (filter === "Absent") query.attendance = "Absent";
+    if (eventId) query.eventId = eventId;
+    else if (eventSlug) query.eventSlug = eventSlug;
+
+    if (search) {
+      query.$or = [
+        { fullName: { $regex: search, $options: "i" } },
+        { mobile: { $regex: search, $options: "i" } },
+        { registrationId: { $regex: search, $options: "i" } },
+        { schoolName: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    const baseEventQuery: any = {};
+    if (eventId) baseEventQuery.eventId = eventId;
+    else if (eventSlug) baseEventQuery.eventSlug = eventSlug;
+
+    const [registrations, totalPresent, totalAbsent, totalCount] = await Promise.all([
+      Registration.find(query).sort({ attendedAt: -1, createdAt: -1 }).lean(),
+      Registration.countDocuments({ ...baseEventQuery, attendance: "Present" }),
+      Registration.countDocuments({ ...baseEventQuery, attendance: "Absent" }),
+      Registration.countDocuments(baseEventQuery),
+    ]);
+
+    res.json({
+      success: true,
+      data: registrations,
+      stats: { totalPresent, totalAbsent, totalCount },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to fetch attendance" });
+  }
+});
+
+// PATCH /api/admin/attendance/:id/reset — Reset attendance back to Absent
+router.patch("/attendance/:id/reset", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const reg = await Registration.findOneAndUpdate(
+      { registrationId: id },
+      { attendance: "Absent", attendedAt: null },
+      { new: true }
+    );
+    if (!reg) return res.status(404).json({ success: false, error: "Registration not found" });
+    res.json({ success: true, data: reg });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Failed to reset attendance" });
+  }
+});
+
+// ── Admin Events Management Endpoints ─────────────────────────────────────
+// GET /api/admin/events — List all events with registration count
+router.get("/events", requireAdmin, async (req, res) => {
+  try {
+    const events = await Event.find().sort({ createdAt: -1 }).lean();
+
+    // Get registration count for each event
+    const eventsWithCount = await Promise.all(
+      events.map(async (ev) => {
+        const registrationCount = await Registration.countDocuments({
+          $or: [{ eventId: ev._id }, { eventSlug: ev.slug }],
+        });
+        return { ...ev, registrationCount };
+      })
+    );
+
+    res.json({ success: true, data: eventsWithCount });
+  } catch (error) {
+    console.error("Error fetching admin events:", error);
+    res.status(500).json({ success: false, error: "Failed to fetch events" });
+  }
+});
+
+// GET /api/admin/events/:id — Get single event details for admin edit
+router.get("/events/:id", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const event = await Event.findById(id).lean();
+    if (!event) {
+      return res.status(404).json({ success: false, error: "Event not found" });
+    }
+    const registrationCount = await Registration.countDocuments({
+      $or: [{ eventId: event._id }, { eventSlug: event.slug }],
+    });
+    res.json({ success: true, data: { ...event, registrationCount } });
+  } catch (error) {
+    console.error("Error fetching admin event details:", error);
+    res.status(500).json({ success: false, error: "Failed to fetch event details" });
+  }
+});
+
+// POST /api/admin/events — Create new event
+router.post("/events", requireAdmin, upload.single("banner"), async (req, res) => {
+  try {
+    const data = typeof req.body.data === "string" ? JSON.parse(req.body.data) : req.body;
+
+    if (!data.title) {
+      return res.status(400).json({ success: false, error: "Event title is required" });
+    }
+
+    // Generate unique slug
+    let slug = data.slug || data.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "");
+    if (!slug) slug = "event-" + Date.now();
+
+    const existingSlug = await Event.findOne({ slug });
+    if (existingSlug) {
+      slug = `${slug}-${Date.now().toString().slice(-4)}`;
+    }
+
+    let bannerUrl = "";
+    let bannerPublicId = "";
+
+    if (req.file) {
+      const b64 = Buffer.from(req.file.buffer).toString("base64");
+      const dataURI = "data:" + req.file.mimetype + ";base64," + b64;
+      const cRes = await cloudinary.uploader.upload(dataURI, {
+        folder: "talamij_events",
+      });
+      bannerUrl = cRes.secure_url;
+      bannerPublicId = cRes.public_id;
+    }
+
+    const newEvent = new Event({
+      ...data,
+      slug,
+      bannerUrl,
+      bannerPublicId,
+    });
+
+    await newEvent.save();
+    res.json({ success: true, data: newEvent, message: "Event created successfully!" });
+  } catch (error: any) {
+    console.error("Error creating event:", error);
+    res.status(500).json({ success: false, error: error.message || "Failed to create event" });
+  }
+});
+
+// PUT /api/admin/events/:id — Update event details
+router.put("/events/:id", requireAdmin, upload.single("banner"), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const data = typeof req.body.data === "string" ? JSON.parse(req.body.data) : req.body;
+
+    const event = await Event.findById(id);
+    if (!event) {
+      return res.status(404).json({ success: false, error: "Event not found" });
+    }
+
+    if (req.file) {
+      if (event.bannerPublicId) {
+        await cloudinary.uploader.destroy(event.bannerPublicId).catch(() => {});
+      }
+      const b64 = Buffer.from(req.file.buffer).toString("base64");
+      const dataURI = "data:" + req.file.mimetype + ";base64," + b64;
+      const cRes = await cloudinary.uploader.upload(dataURI, {
+        folder: "talamij_events",
+      });
+      data.bannerUrl = cRes.secure_url;
+      data.bannerPublicId = cRes.public_id;
+    }
+
+    // Update fields
+    Object.assign(event, data);
+    await event.save();
+
+    res.json({ success: true, data: event, message: "Event updated successfully!" });
+  } catch (error: any) {
+    console.error("Error updating event:", error);
+    res.status(500).json({ success: false, error: error.message || "Failed to update event" });
+  }
+});
+
+// DELETE /api/admin/events/:id — Delete event
+router.delete("/events/:id", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const event = await Event.findById(id);
+
+    if (!event) {
+      return res.status(404).json({ success: false, error: "Event not found" });
+    }
+
+    if (event.bannerPublicId) {
+      await cloudinary.uploader.destroy(event.bannerPublicId).catch(() => {});
+    }
+
+    await Event.findByIdAndDelete(id);
+    res.json({ success: true, message: "Event deleted successfully!" });
+  } catch (error) {
+    console.error("Error deleting event:", error);
+    res.status(500).json({ success: false, error: "Failed to delete event" });
+  }
+});
+
 // Get Registrations Table Data
 router.get("/registrations", async (req, res) => {
 	try {
@@ -133,10 +378,15 @@ router.get("/registrations", async (req, res) => {
 		const limit = parseInt(req.query.limit as string) || 10;
 		const search = (req.query.search as string) || "";
 		const status = (req.query.status as string) || "";
+		const eventId = (req.query.eventId as string) || "";
+		const eventSlug = (req.query.eventSlug as string) || "";
 
 		const skip = (page - 1) * limit;
 
 		let query: any = {};
+
+		if (eventId) query.eventId = eventId;
+		else if (eventSlug) query.eventSlug = eventSlug;
 
 		if (search) {
 			query.$or = [

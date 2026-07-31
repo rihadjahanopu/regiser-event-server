@@ -9,6 +9,7 @@ import adminRoutes from "./routes/admin.js";
 import settingsRoutes from "./routes/settings.js";
 import blogRoutes from "./routes/blog.js";
 import userRoutes from "./routes/user.js";
+import eventRoutes from "./routes/events.js";
 
 // Load environment variables
 dotenv.config();
@@ -66,6 +67,7 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/blog", blogRoutes);
 app.use("/api/user", userRoutes);
+app.use("/api/events", eventRoutes);
 
 // Start server locally (Vercel will use the exported app instead)
 if (!process.env.VERCEL && process.env.NODE_ENV !== "production") {

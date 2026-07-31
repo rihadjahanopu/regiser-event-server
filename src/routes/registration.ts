@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { Registration } from "../models/Registration.js";
 import { Certificate } from "../models/Certificate.js";
+import { Event } from "../models/Event.js";
 
 const router = Router();
 
@@ -20,9 +21,13 @@ router.post("/register", async (req, res) => {
     
     // Zod validation could be added here similar to frontend
     
-    const existingUser = await Registration.findOne({ mobile: data.mobile });
+    const existingQuery: any = { mobile: data.mobile };
+    if (data.eventId) existingQuery.eventId = data.eventId;
+    else if (data.eventSlug) existingQuery.eventSlug = data.eventSlug;
+
+    const existingUser = await Registration.findOne(existingQuery);
     if (existingUser) {
-      return res.status(400).json({ success: false, error: "Mobile number is already registered." });
+      return res.status(400).json({ success: false, error: "Mobile number is already registered for this event." });
     }
 
     const registrationId = "REG-" + Date.now().toString().slice(-6) + Math.floor(Math.random() * 1000);
@@ -55,7 +60,14 @@ router.get("/verify/:id", async (req, res) => {
       return res.status(404).json({ success: false, error: "Registration not found" });
     }
     
-    res.json({ success: true, registration });
+    let event = null;
+    if (registration.eventId) {
+      event = await Event.findById(registration.eventId).lean();
+    } else if (registration.eventSlug) {
+      event = await Event.findOne({ slug: registration.eventSlug }).lean();
+    }
+    
+    res.json({ success: true, registration, event });
   } catch (error: any) {
     console.error("Fetch error:", error);
     res.status(500).json({ success: false, error: "Failed to fetch details" });
