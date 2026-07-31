@@ -40,12 +40,96 @@ const uploadToCloudinary = (fileBuffer: Buffer, folder: string): Promise<any> =>
   });
 };
 
+const RESERVED_USERNAMES = [
+  "admin", "api", "dashboard", "blog", "events", "event-form", 
+  "gallery", "about", "success", "unauthorized", "verify", 
+  "login", "register", "settings", "profile", "notifications", 
+  "home", "contact"
+];
+
 // 1. GET /me — Fetch profile details
 router.get("/me", requireAuth, async (req, res) => {
   try {
     res.json({ success: true, user: (req as any).session.user });
   } catch (error) {
     res.status(500).json({ success: false, error: "Failed to fetch user details" });
+  }
+});
+
+// GET /check-username/:username — Check username availability
+router.get("/check-username/:username", async (req, res) => {
+  try {
+    const { username } = req.params;
+    const trimmed = username.trim();
+    if (!/^[a-zA-Z0-9_-]{3,30}$/.test(trimmed)) {
+      return res.json({ available: false, reason: "Must be 3-30 characters, letters, numbers, '_' or '-' only." });
+    }
+    if (RESERVED_USERNAMES.includes(trimmed.toLowerCase())) {
+      return res.json({ available: false, reason: "This username is reserved." });
+    }
+    const db = await getDb();
+    const existingUser = await db.collection("user").findOne({
+      username: { $regex: new RegExp(`^${trimmed}$`, "i") }
+    });
+    if (existingUser) {
+      return res.json({ available: false, reason: "Username is already taken." });
+    }
+    res.json({ available: true, reason: "Username is available!" });
+  } catch (error) {
+    res.status(500).json({ available: false, reason: "Error checking username." });
+  }
+});
+
+// GET /public/:username — Fetch public profile details & published blogs
+router.get("/public/:username", async (req, res) => {
+  try {
+    const { username } = req.params;
+    const db = await getDb();
+    const user = await db.collection("user").findOne({
+      username: { $regex: new RegExp(`^${username.trim()}$`, "i") }
+    });
+    if (!user) {
+      return res.status(404).json({ success: false, error: "User profile not found" });
+    }
+    
+    const isPrivate = user.privacySettings === "private";
+    const userIdStr = user._id ? user._id.toString() : user.id;
+
+    // Fetch user's published blogs if profile is not private
+    let userBlogs: any[] = [];
+    if (!isPrivate) {
+      userBlogs = await Blog.find({ 
+        $or: [{ author: userIdStr }, { author: user.id }],
+        status: "Published" 
+      })
+      .select("title slug category coverImage estimatedReadingTime createdAt shortDescription views likes comments")
+      .sort({ createdAt: -1 });
+    }
+
+    const publicProfile = {
+      id: userIdStr,
+      name: user.name,
+      username: user.username,
+      image: user.image || null,
+      role: user.role || "user",
+      createdAt: user.createdAt,
+      isPrivate,
+      ...(isPrivate ? {} : {
+        bio: user.bio || "",
+        website: user.website || "",
+        location: user.location || "",
+        phoneNumber: user.phoneNumber || "",
+      })
+    };
+
+    res.json({
+      success: true,
+      user: publicProfile,
+      blogs: userBlogs
+    });
+  } catch (error: any) {
+    console.error("Error fetching public profile:", error);
+    res.status(500).json({ success: false, error: "Failed to fetch public profile" });
   }
 });
 
@@ -57,7 +141,6 @@ router.put("/profile", requireAuth, upload.single("image"), async (req: any, res
 
     const updates: any = {};
     if (name) updates.name = name;
-    if (username) updates.username = username;
     if (bio !== undefined) updates.bio = bio;
     if (phoneNumber !== undefined) updates.phoneNumber = phoneNumber;
     if (website !== undefined) updates.website = website;
@@ -68,7 +151,6 @@ router.put("/profile", requireAuth, upload.single("image"), async (req: any, res
       updates.image = uploadRes.secure_url;
     }
 
-    // Direct update in better-auth's user collection in MongoDB
     const db = await getDb();
 
     let queryId: any = userId;
@@ -78,17 +160,36 @@ router.put("/profile", requireAuth, upload.single("image"), async (req: any, res
     const userFilter = { $or: [{ _id: userId }, { _id: queryId }, { id: userId }] };
 
     // Check unique username if username is provided
-    if (username) {
-      const existingUser = await db.collection("user").findOne({
-        username,
-        $and: [
-          { _id: { $ne: userId } },
-          { _id: { $ne: queryId } },
-          { id: { $ne: userId } }
-        ]
-      });
-      if (existingUser) {
-        return res.status(400).json({ success: false, error: "Username already taken" });
+    if (username !== undefined) {
+      const trimmedUsername = username.trim();
+      if (trimmedUsername) {
+        const usernameRegex = /^[a-zA-Z0-9_-]{3,30}$/;
+        if (!usernameRegex.test(trimmedUsername)) {
+          return res.status(400).json({
+            success: false,
+            error: "Username must be 3-30 characters long and contain only letters, numbers, underscores, or hyphens."
+          });
+        }
+
+        if (RESERVED_USERNAMES.includes(trimmedUsername.toLowerCase())) {
+          return res.status(400).json({
+            success: false,
+            error: `'${trimmedUsername}' is a reserved system name and cannot be used.`
+          });
+        }
+
+        const existingUser = await db.collection("user").findOne({
+          username: { $regex: new RegExp(`^${trimmedUsername}$`, "i") },
+          $and: [
+            { _id: { $ne: userId } },
+            { _id: { $ne: queryId } },
+            { id: { $ne: userId } }
+          ]
+        });
+        if (existingUser) {
+          return res.status(400).json({ success: false, error: "Username is already taken" });
+        }
+        updates.username = trimmedUsername;
       }
     }
 
